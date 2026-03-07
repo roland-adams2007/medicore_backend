@@ -1,0 +1,35 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "THis is the backend of my client managment system",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "worker": "node services/workers/email.worker.js",
+    "dev:all": "concurrently \"nodemon server.js\" \"node -r dotenv/config services/workers/email.worker.js\""
+  },
+  "author": "Roland Adams",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.98.0",
+    "axios": "^1.13.4",
+    "bcryptjs": "^3.0.3",
+    "bullmq": "^5.67.3",
+    "concurrently": "^9.2.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-async-handler": "^1.2.0",
+    "express-rate-limit": "^8.1.0",
+    "ioredis": "^5.9.2",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.1.1",
+    "mysql2": "^3.16.3",
+    "postgres": "^3.4.8",
+    "ua-parser-js": "^2.0.9",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  }
+}
