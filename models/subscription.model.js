@@ -90,7 +90,7 @@ const Subscription = {
             max_users, max_branches, max_storage_mb, is_active
          FROM subscriptions
          WHERE is_active = 1
-         ORDER BY price_monthly ASC`,
+         ORDER BY id ASC`,
       );
       return rows || [];
     } catch {

@@ -1,8 +1,9 @@
 const express = require("express");
-const validateTokenHandler = require("../middleware/validateTokenHandler");
-const { getSubs } = require("../controllers/subscription.controller");
+const { getSubs, getPermissionsBySubId } = require("../controllers/subscription.controller");
 
 const router = express.Router();
+
 router.get("/", getSubs);
+router.get("/:id/permissions", getPermissionsBySubId);
 
 module.exports = router;
