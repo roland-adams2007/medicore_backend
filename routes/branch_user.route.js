@@ -6,7 +6,15 @@ const {
   checkSubscriptionLimit,
   checkSubscriptionFeature,
 } = require("../middleware/subscriptionGuard");
-const { inviteStaff } = require("../controllers/branch_user.controller");
+const {
+  inviteStaff,
+  staffInviteLookup,
+  acceptStaffInvite,
+  rejectStaffInvite,
+} = require("../controllers/branch_user.controller");
+router.get("/invite/lookup", staffInviteLookup);
+router.post("/invite/accept", validateTokenHandler, acceptStaffInvite);
+router.post("/invite/reject", validateTokenHandler, rejectStaffInvite);
 router.post(
   "/:clinicId/invite",
   validateTokenHandler,

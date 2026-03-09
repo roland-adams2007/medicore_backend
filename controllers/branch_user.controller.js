@@ -7,6 +7,10 @@ const crypto = require("crypto");
 const emailQueue = require("../services/queues/email.queue.js");
 const { checkEmailRateLimit } = require("../utils/emailRateLimit.js");
 const Role = require("../models/role.model.js");
+const generateToken = require("../utils/generateToken.js");
+
+const sha256 = (value) =>
+  crypto.createHash("sha256").update(value).digest("hex");
 
 const addStaff = asyncHandler(async function (req, res) {
   const { email } = req.body;
@@ -79,8 +83,8 @@ const inviteStaff = asyncHandler(async function (req, res) {
   const branch = await Branch.findById(branch_id);
   const role = await Role.findById(role_id);
 
-  const rawToken = crypto.randomBytes(32).toString("hex");
-  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const rawToken = generateToken();
+  const tokenHash = sha256(rawToken);
   const nowUtc = new Date();
   const expiresAt = new Date(nowUtc.getTime() + 48 * 60 * 60 * 1000);
   const expiresAtStr = expiresAt.toISOString().slice(0, 19).replace("T", " ");
@@ -119,7 +123,137 @@ const inviteStaff = asyncHandler(async function (req, res) {
   responseHandler(res, null, "Invite sent successfully.");
 });
 
-const acceptStaffInvite = asyncHandler(async function (req, res) {});
-const rejectStaffInvite = asyncHandler(async function (req, res) {});
+const acceptStaffInvite = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
+  const { token } = req.body;
 
-module.exports = { inviteStaff };
+  if (!token) {
+    res.status(400);
+    throw new Error("Invite token is required.");
+  }
+  const tokenHash = sha256(token);
+
+  const invite = await BranchUser.findByToken(tokenHash);
+
+  if (!invite) {
+    res.status(404);
+    throw new Error("Invite not found or has already been used.");
+  }
+
+  // Wrong user trying to accept
+  if (invite.email.toLowerCase() !== req.user?.email?.toLowerCase()) {
+    res.status(403);
+    throw new Error("This invite was sent to a different email address.");
+  }
+
+  if (invite.status !== "pending") {
+    res.status(410);
+    throw new Error(`This invite has already been ${invite.status}.`);
+  }
+
+  if (new Date(invite.expires_at) < new Date()) {
+    await BranchUser.updateStatus(invite.id, "expired");
+    res.status(410);
+    throw new Error("This invite link has expired.");
+  }
+
+  const assigned = await BranchUser.create({
+    branch_id: invite.branch_id,
+    user_id: userId,
+    role_id: invite.role_id,
+  });
+
+  if (!assigned) {
+    res.status(500);
+    throw new Error("Failed to add you to the branch.");
+  }
+
+  await BranchUser.updateStatus(invite.id, "accepted");
+
+  res.status(200);
+  responseHandler(res, null, "Invite accepted successfully.");
+});
+
+const rejectStaffInvite = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
+  const { token } = req.body;
+
+  if (!token) {
+    res.status(400);
+    throw new Error("Invite token is required.");
+  }
+
+  const tokenHash = sha256(token);
+
+  const invite = await BranchUser.findByToken(tokenHash);
+
+  if (!invite) {
+    res.status(404);
+    throw new Error("Invite not found or has already been used.");
+  }
+
+  if (invite.email.toLowerCase() !== req.user?.email?.toLowerCase()) {
+    res.status(403);
+    throw new Error("This invite was sent to a different email address.");
+  }
+
+  if (invite.status !== "pending") {
+    res.status(410);
+    throw new Error(`This invite has already been ${invite.status}.`);
+  }
+
+  if (new Date(invite.expires_at) < new Date()) {
+    await BranchUser.updateStatus(invite.id, "expired");
+    res.status(410);
+    throw new Error("This invite link has expired.");
+  }
+
+  await BranchUser.updateStatus(invite.id, "declined");
+
+  res.status(200);
+  responseHandler(res, null, "Invite declined.");
+});
+
+const staffInviteLookup = asyncHandler(async function (req, res) {
+  const { token } = req.query;
+  if (!token) {
+    res.status(400);
+    throw new Error("Invite token is required.");
+  }
+  const tokenHash = sha256(token);
+
+  const invite = await BranchUser.findInviteTokenByToken(tokenHash);
+
+  if (!invite) {
+    res.status(400);
+    throw new Error("Invite not found or has already been used.");
+  }
+
+  if (invite.status !== "pending") {
+    res.status(400);
+    throw new Error(`This invite has already been ${invite.status}.`);
+  }
+
+  if (new Date(invite.expires_at) < new Date()) {
+    await BranchUser.updateInviteTokenStatus(invite.id, "expired");
+    res.status(400);
+    throw new Error("This invite link has expired.");
+  }
+
+  res.status(200);
+  responseHandler(res, {
+    email: invite.email,
+    clinic_name: invite.clinic_name,
+    branch_name: invite.branch_name,
+    role_name: invite.role_name,
+    invited_by: invite.invited_by_name,
+    expires_at: invite.expires_at,
+  });
+});
+
+module.exports = {
+  inviteStaff,
+  staffInviteLookup,
+  acceptStaffInvite,
+  rejectStaffInvite,
+};
