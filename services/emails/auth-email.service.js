@@ -12,7 +12,7 @@ const { system } = require("../../config/config.inc");
 async function sendVerificationEmail({ to, name, token }) {
   const verificationLink = `${system.APP_URL}/auth/verify-email?token=${token}`;
 
-  const subject = "Verify your FUS email address";
+  const subject = "Verify your email – MediCore";
   const html = VerifyEmailTemplate({
     userName: name || "there",
     verificationLink,
@@ -23,7 +23,7 @@ async function sendVerificationEmail({ to, name, token }) {
 
 async function sendVerificationEmailReminder({ to, name, token }) {
   const verificationLink = `${system.APP_URL}/auth/verify-email?token=${token}`;
-  const subject = "Action required: Verify your FUS account";
+  const subject = "Action required: Verify your MediCore account";
 
   const html = VerifyEmailTemplate({
     userName: name,
@@ -41,7 +41,7 @@ async function sendLoginNotificationEmail({
   deviceInfo = "Web browser",
   location = "Unknown",
 }) {
-  const subject = "New sign-in to your FUS account";
+  const subject = "New sign-in to your MediCore account";
 
   const html = LoginNotificationTemplate({
     userName: userName || "User",

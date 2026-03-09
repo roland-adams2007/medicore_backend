@@ -221,3 +221,81 @@ CREATE TABLE IF NOT EXISTS branch_users (
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
   UNIQUE KEY uq_branch_user (branch_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS staff_profiles (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL UNIQUE,
+  clinic_id BIGINT UNSIGNED NULL,
+
+  staff_id VARCHAR(50) NULL UNIQUE,
+
+  phone VARCHAR(50) NULL,
+  alt_phone VARCHAR(50) NULL,
+  gender ENUM('male','female','other') NULL,
+  date_of_birth DATE NULL,
+  profile_photo_url VARCHAR(512) NULL,
+
+  address TEXT NULL,
+  city VARCHAR(150) NULL,
+  state_id BIGINT UNSIGNED NULL,
+
+  date_joined DATE NULL,
+  date_left DATE NULL,
+
+  employment_type ENUM('full_time','part_time','contract','locum') NULL,
+  status ENUM('active','suspended','terminated','resigned') DEFAULT 'active',
+
+  salary DECIMAL(12,2) NULL,
+  salary_frequency ENUM('monthly','weekly','daily','hourly') DEFAULT 'monthly',
+
+  specialization VARCHAR(150) NULL,
+  license_number VARCHAR(100) NULL,
+  license_expiry DATE NULL,
+  qualification VARCHAR(255) NULL,
+
+  emergency_contact_name VARCHAR(150) NULL,
+  emergency_contact_phone VARCHAR(50) NULL,
+  emergency_contact_relationship VARCHAR(80) NULL,
+
+  notes TEXT NULL,
+
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
+  FOREIGN KEY (state_id) REFERENCES states(id) ON DELETE SET NULL,
+
+  INDEX idx_staff_status (status),
+  INDEX idx_staff_specialization (specialization)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE IF NOT EXISTS branch_user_invites (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+  branch_id BIGINT UNSIGNED NOT NULL,
+  clinic_id BIGINT UNSIGNED NOT NULL,
+
+  email VARCHAR(190) NOT NULL,
+  role_id BIGINT UNSIGNED NOT NULL,
+
+  invited_by BIGINT UNSIGNED NOT NULL,
+
+  token CHAR(64) NOT NULL UNIQUE,
+
+  status ENUM('pending','accepted','declined','expired') DEFAULT 'pending',
+
+  expires_at DATETIME NOT NULL,
+  accepted_at DATETIME NULL,
+
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  FOREIGN KEY (clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
+  FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+  FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE CASCADE,
+
+  INDEX idx_invite_email (email),
+  INDEX idx_invite_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
