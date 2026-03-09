@@ -1,6 +1,41 @@
 const { db_connection } = require("../config/config.inc");
 
 const BranchUser = {
+  findUserRoleWithPermissions: async (branchId, userId) => {
+    try {
+      const [rows] = await db_connection.execute(
+        `SELECT
+            bu.id,
+            bu.branch_id,
+            bu.user_id,
+            bu.role_id,
+            r.name AS role_name,
+            COALESCE(
+              JSON_ARRAYAGG(p.name ORDER BY p.name),
+              JSON_ARRAY()
+            ) AS permissions
+         FROM branch_users bu
+         JOIN roles r ON bu.role_id = r.id
+         LEFT JOIN role_permissions rp ON rp.role_id = r.id
+         LEFT JOIN permissions p ON p.id = rp.permission_id
+         WHERE bu.branch_id = ? AND bu.user_id = ?
+         GROUP BY bu.id, bu.branch_id, bu.user_id, bu.role_id, r.name
+         LIMIT 1`,
+        [branchId, userId],
+      );
+      if (!rows[0]) return null;
+      const row = rows[0];
+      row.permissions =
+        typeof row.permissions === "string"
+          ? JSON.parse(row.permissions)
+          : (row.permissions ?? []);
+      return row;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  },
+
   findUserRole: async (branchId, userId) => {
     try {
       const [rows] = await db_connection.execute(
@@ -59,49 +94,13 @@ const BranchUser = {
     }
   },
 
-  // create: async (data) => {
-  //   try {
-  //     const {
-  //       branch_id,
-  //       clinic_id,
-  //       email,
-  //       role_id,
-  //       invited_by,
-  //       token,
-  //       status,
-  //       expires_at,
-  //       created_at,
-  //     } = data;
-  //     const [result] = await db_connection.execute(
-  //       `INSERT INTO branch_user_invites
-  //          (branch_id, clinic_id, email, role_id, invited_by, token, status, expires_at, created_at)
-  //        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  //       [
-  //         branch_id,
-  //         clinic_id,
-  //         email,
-  //         role_id,
-  //         invited_by,
-  //         token,
-  //         status,
-  //         expires_at,
-  //         created_at,
-  //       ],
-  //     );
-  //     return result.insertId || null;
-  //   } catch (error) {
-  //     console.error(error);
-  //     return null;
-  //   }
-  // },
-
   findByEmailAndBranch: async (email, branchId) => {
     try {
       const [rows] = await db_connection.execute(
         `SELECT bu.id FROM branch_users bu
-       JOIN users u ON bu.user_id = u.id
-       WHERE u.email = ? AND bu.branch_id = ?
-       LIMIT 1`,
+         JOIN users u ON bu.user_id = u.id
+         WHERE u.email = ? AND bu.branch_id = ?
+         LIMIT 1`,
         [email, branchId],
       );
       return rows[0] || null;
@@ -136,26 +135,457 @@ const BranchUser = {
       return null;
     }
   },
+
+  findInviteById: async (inviteId) => {
+    try {
+      const [rows] = await db_connection.execute(
+        `SELECT
+          bui.id,
+          bui.email,
+          bui.status,
+          bui.expires_at,
+          bui.accepted_at,
+          bui.created_at,
+          bui.branch_id,
+          bui.clinic_id,
+          bui.role_id,
+          bui.invited_by,
+
+          r.name  AS role_name,
+
+          u.id    AS invited_by_user_id,
+          u.fname AS invited_by_fname,
+          u.lname AS invited_by_lname,
+
+          c.name  AS clinic_name,
+          b.name  AS branch_name,
+
+          iu.id   AS invited_user_id,
+          sp.id   AS staff_profile_id
+
+        FROM branch_user_invites bui
+        LEFT JOIN roles    r  ON r.id  = bui.role_id
+        LEFT JOIN users    u  ON u.id  = bui.invited_by
+        LEFT JOIN clinics  c  ON c.id  = bui.clinic_id
+        LEFT JOIN branches b  ON b.id  = bui.branch_id
+        LEFT JOIN users    iu ON iu.email = bui.email
+        LEFT JOIN staff_profiles sp ON sp.user_id = iu.id AND sp.clinic_id = bui.clinic_id
+        WHERE bui.id = ?
+        LIMIT 1`,
+        [inviteId],
+      );
+      return rows[0] || null;
+    } catch (error) {
+      console.error("Error in findInviteById:", error);
+      return null;
+    }
+  },
+
   updateInviteTokenStatus: async (inviteId, status) => {
     try {
-      const query = `UPDATE branch_user_invites SET status = ?  WHERE id = ?`;
-      const [result] = await db_connection.execute(query, [status, inviteId]);
+      const [result] = await db_connection.execute(
+        `UPDATE branch_user_invites SET status = ? WHERE id = ?`,
+        [status, inviteId],
+      );
       return result.affectedRows > 0;
     } catch (error) {
       return null;
     }
   },
+
+  updateInviteExpiry: async (inviteId, newExpiresAt) => {
+    try {
+      const [result] = await db_connection.execute(
+        `UPDATE branch_user_invites SET status = 'pending', expires_at = ? WHERE id = ?`,
+        [newExpiresAt, inviteId],
+      );
+      return result.affectedRows > 0;
+    } catch (error) {
+      console.error("Error in updateInviteExpiry:", error);
+      return false;
+    }
+  },
+
+  updateInviteToken: async (tokenHash,expiresAtStr,inviteId) => {
+    try {
+      const [result] = await db_connection.execute(
+        `UPDATE branch_user_invites SET token = ?, status = 'pending', expires_at = ? WHERE id = ?`,
+        [tokenHash, expiresAtStr, inviteId],
+      );
+      return result.affectedRows > 0;
+    } catch (error) {
+      console.error("Error in updateInviteExpiry:", error);
+      return false;
+    }
+  },
+
   create: async ({ branch_id, user_id, role_id }) => {
     try {
       const [result] = await db_connection.execute(
         `INSERT INTO branch_users (branch_id, user_id, role_id)
-       VALUES (?, ?, ?)`,
+         VALUES (?, ?, ?)`,
         [branch_id, user_id, role_id],
       );
       return result.affectedRows > 0;
     } catch (error) {
       console.error(error);
       return false;
+    }
+  },
+
+  createStaffProfile: async ({
+    user_id,
+    clinic_id,
+    staff_id,
+    phone,
+    alt_phone,
+    gender,
+    date_of_birth,
+    profile_photo_url,
+    address,
+    city,
+    state_id,
+    date_joined,
+    date_left,
+    employment_type,
+    salary,
+    salary_frequency,
+    specialization,
+    license_number,
+    license_expiry,
+    qualification,
+    emergency_contact_name,
+    emergency_contact_phone,
+    emergency_contact_relationship,
+    notes,
+  }) => {
+    try {
+      const [existing] = await db_connection.execute(
+        `SELECT id FROM staff_profiles WHERE user_id = ? LIMIT 1`,
+        [user_id],
+      );
+
+      if (existing.length > 0) {
+        await db_connection.execute(
+          `UPDATE staff_profiles SET
+            clinic_id = ?,
+            staff_id = COALESCE(NULLIF(?, ''), staff_id),
+            phone = ?,
+            alt_phone = ?,
+            gender = ?,
+            date_of_birth = ?,
+            profile_photo_url = ?,
+            address = ?,
+            city = ?,
+            state_id = ?,
+            date_joined = ?,
+            date_left = ?,
+            employment_type = ?,
+            salary = ?,
+            salary_frequency = ?,
+            specialization = ?,
+            license_number = ?,
+            license_expiry = ?,
+            qualification = ?,
+            emergency_contact_name = ?,
+            emergency_contact_phone = ?,
+            emergency_contact_relationship = ?,
+            notes = ?,
+            updated_at = NOW()
+          WHERE user_id = ?`,
+          [
+            clinic_id,
+            staff_id || null,
+            phone || null,
+            alt_phone || null,
+            gender || null,
+            date_of_birth || null,
+            profile_photo_url || null,
+            address || null,
+            city || null,
+            state_id || null,
+            date_joined || null,
+            date_left || null,
+            employment_type || null,
+            salary || null,
+            salary_frequency || "monthly",
+            specialization || null,
+            license_number || null,
+            license_expiry || null,
+            qualification || null,
+            emergency_contact_name || null,
+            emergency_contact_phone || null,
+            emergency_contact_relationship || null,
+            notes || null,
+            user_id,
+          ],
+        );
+        return { id: existing[0].id, updated: true };
+      }
+
+      const [result] = await db_connection.execute(
+        `INSERT INTO staff_profiles (
+          user_id, clinic_id, staff_id, phone, alt_phone, gender,
+          date_of_birth, profile_photo_url, address, city, state_id,
+          date_joined, date_left, employment_type, salary, salary_frequency,
+          specialization, license_number, license_expiry, qualification,
+          emergency_contact_name, emergency_contact_phone,
+          emergency_contact_relationship, notes, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+        [
+          user_id,
+          clinic_id,
+          staff_id || null,
+          phone || null,
+          alt_phone || null,
+          gender || null,
+          date_of_birth || null,
+          profile_photo_url || null,
+          address || null,
+          city || null,
+          state_id || null,
+          date_joined || null,
+          date_left || null,
+          employment_type || null,
+          salary || null,
+          salary_frequency || "monthly",
+          specialization || null,
+          license_number || null,
+          license_expiry || null,
+          qualification || null,
+          emergency_contact_name || null,
+          emergency_contact_phone || null,
+          emergency_contact_relationship || null,
+          notes || null,
+        ],
+      );
+      return { id: result.insertId, updated: false };
+    } catch (error) {
+      console.error("Error in createStaffProfile:", error);
+      return null;
+    }
+  },
+
+  findStaffByBranch: async ({
+    clinicId,
+    branchId,
+    search = null,
+    roleId = null,
+    status = null,
+    departmentId = null,
+    limit = 20,
+    offset = 0,
+  }) => {
+    try {
+      const params = [];
+      const conditions = ["bu.branch_id = ?", "b.clinic_id = ?"];
+      params.push(branchId, clinicId);
+
+      if (search) {
+        conditions.push(
+          `(u.fname LIKE ? OR u.lname LIKE ? OR u.email LIKE ? OR sp.staff_id LIKE ?)`,
+        );
+        const like = `%${search}%`;
+        params.push(like, like, like, like);
+      }
+      if (roleId) {
+        conditions.push("bu.role_id = ?");
+        params.push(roleId);
+      }
+      if (status) {
+        conditions.push("sp.status = ?");
+        params.push(status);
+      }
+      if (departmentId) {
+        conditions.push("sd.department_id = ?");
+        params.push(departmentId);
+      }
+
+      const where = conditions.join(" AND ");
+      const countParams = [...params];
+      const [[{ total }]] = await db_connection.execute(
+        `SELECT COUNT(DISTINCT bu.id) AS total
+         FROM branch_users bu
+         JOIN branches b       ON b.id        = bu.branch_id
+         JOIN users u          ON u.id        = bu.user_id
+         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         ${departmentId ? "LEFT JOIN staff_departments sd ON sd.staff_profile_id = sp.id" : ""}
+         WHERE ${where}`,
+        countParams,
+      );
+
+      if (total === 0) return { staff: [], total: 0 };
+
+      const dataParams = [...params, limit, offset];
+      const [rows] = await db_connection.execute(
+        `SELECT
+          bu.id              AS branch_user_id,
+          u.id               AS user_id,
+          u.uuid             AS user_uuid,
+          u.fname,
+          u.lname,
+          u.email,
+          u.is_active,
+          r.id               AS role_id,
+          r.name             AS role_name,
+          sp.staff_id,
+          sp.phone,
+          sp.gender,
+          sp.profile_photo_url,
+          sp.employment_type,
+          sp.status          AS staff_status,
+          sp.specialization,
+          sp.date_joined,
+          bu.assigned_at,
+          (
+            SELECT JSON_ARRAYAGG(JSON_OBJECT('id', d.id, 'name', d.name))
+            FROM staff_departments sd2
+            LEFT JOIN departments d ON d.id = sd2.department_id
+            WHERE sd2.staff_profile_id = sp.id AND d.branch_id = bu.branch_id
+          ) AS departments
+         FROM branch_users bu
+         LEFT JOIN branches b         ON b.id       = bu.branch_id
+         LEFT JOIN users u            ON u.id       = bu.user_id
+         LEFT JOIN roles r            ON r.id       = bu.role_id
+         LEFT JOIN staff_profiles sp  ON sp.user_id = u.id
+         ${departmentId ? "LEFT JOIN staff_departments sd ON sd.staff_profile_id = sp.id" : ""}
+         WHERE ${where}
+         GROUP BY bu.id
+         ORDER BY u.fname ASC, u.lname ASC
+         LIMIT ? OFFSET ?`,
+        dataParams,
+      );
+
+      const staff = rows.map((row) => ({
+        ...row,
+        departments:
+          typeof row.departments === "string"
+            ? JSON.parse(row.departments)
+            : (row.departments ?? []),
+      }));
+
+      return { staff, total };
+    } catch (error) {
+      console.error(error);
+      return { staff: [], total: 0 };
+    }
+  },
+
+  invite: async ({
+    branch_id,
+    clinic_id,
+    email,
+    role_id,
+    invited_by,
+    token,
+    status,
+    expires_at,
+    created_at,
+  }) => {
+    try {
+      const [result] = await db_connection.execute(
+        `INSERT INTO branch_user_invites 
+         (branch_id, clinic_id, email, role_id, invited_by, token, status, expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          branch_id,
+          clinic_id,
+          email,
+          role_id,
+          invited_by,
+          token,
+          status,
+          expires_at,
+          created_at,
+        ],
+      );
+      return result.insertId;
+    } catch (error) {
+      console.error("Error creating branch user invite:", error);
+      return null;
+    }
+  },
+
+  findStaffInviteByClinicAndBranch: async ({
+    branchId,
+    clinicId,
+    search = null,
+    roleId = null,
+    status = null,
+    limit = 20,
+    offset = 0,
+  }) => {
+    try {
+      const params = [];
+      const conditions = ["bui.clinic_id = ?", "bui.branch_id = ?"];
+      params.push(clinicId, branchId);
+
+      if (search) {
+        conditions.push(
+          `(bui.email LIKE ? OR u.fname LIKE ? OR u.lname LIKE ?)`,
+        );
+        const like = `%${search}%`;
+        params.push(like, like, like);
+      }
+      if (roleId) {
+        conditions.push("bui.role_id = ?");
+        params.push(roleId);
+      }
+      if (status) {
+        conditions.push("bui.status = ?");
+        params.push(status);
+      }
+
+      const where = conditions.join(" AND ");
+      const countParams = [...params];
+
+      const [[{ total }]] = await db_connection.execute(
+        `SELECT COUNT(DISTINCT bui.id) AS total
+         FROM branch_user_invites bui
+         LEFT JOIN users u ON bui.invited_by = u.id
+         LEFT JOIN roles r ON bui.role_id = r.id
+         WHERE ${where}`,
+        countParams,
+      );
+
+      if (total === 0) return { staffInvites: [], total: 0 };
+
+      const dataParams = [...params, limit.toString(), offset.toString()];
+      const [rows] = await db_connection.execute(
+        `SELECT 
+          bui.id,
+          bui.email,
+          bui.status,
+          bui.expires_at,
+          bui.accepted_at,
+          bui.created_at,
+          bui.invited_by,
+
+          r.id   AS role_id,
+          r.name AS role_name,
+
+          u.id    AS invited_by_user_id,
+          u.fname AS invited_by_fname,
+          u.lname AS invited_by_lname,
+
+          iu.id   AS invited_user_id,
+          sp.id   AS staff_profile_id
+
+         FROM branch_user_invites bui
+         LEFT JOIN users u  ON u.id  = bui.invited_by
+         LEFT JOIN roles r  ON r.id  = bui.role_id
+         LEFT JOIN users iu ON iu.email = bui.email
+         LEFT JOIN staff_profiles sp ON sp.user_id = iu.id AND sp.clinic_id = bui.clinic_id
+         WHERE ${where}
+         ORDER BY bui.created_at DESC
+         LIMIT ? OFFSET ?`,
+        dataParams,
+      );
+
+      return { staffInvites: rows || [], total };
+    } catch (error) {
+      console.error("Error in findStaffInviteByClinicAndBranch:", error);
+      return { staffInvites: [], total: 0 };
     }
   },
 };

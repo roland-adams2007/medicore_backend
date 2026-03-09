@@ -26,6 +26,7 @@ const inviteStaff = asyncHandler(async function (req, res) {
   const { email, branch_id, role_id } = req.body;
   const ipAddress = req.ip || req.headers["x-forwarded-for"] || null;
 
+  // --- Validation ---
   if (!email || !branch_id || !role_id) {
     res.status(400);
     throw new Error("email, branch_id, and role_id are required.");
@@ -37,6 +38,7 @@ const inviteStaff = asyncHandler(async function (req, res) {
     throw new Error("You cannot invite yourself.");
   }
 
+  // --- Rate limit per email ---
   const rl = await checkEmailRateLimit(
     `${email}:INVITE_STAFF`,
     ipAddress,
@@ -48,21 +50,19 @@ const inviteStaff = asyncHandler(async function (req, res) {
     throw new Error("Too many invite attempts. Please try again later.");
   }
 
+  // --- Clinic exists (already guaranteed by checkRolePermission middleware,
+  //     but we need the record for the email payload below) ---
   const clinic = await Clinic.findById(clinicId);
   if (!clinic) {
     res.status(404);
     throw new Error("Clinic not found.");
   }
 
-  const requesterRole = await BranchUser.findUserRole(branch_id, userId);
-  if (!requesterRole && clinic.owner_id !== userId) {
-    res.status(403);
-    throw new Error(
-      "You do not have permission to invite staff to this branch.",
-    );
-  }
+  // NOTE: role/membership check is now handled upstream by:
+  //   checkRolePermission("staff.invite")
+  // No need to re-check requesterRole here.
 
-  // Cannot invite someone already in this branch
+  // --- Duplicate checks ---
   const existingMember = await BranchUser.findByEmailAndBranch(
     email,
     branch_id,
@@ -80,9 +80,11 @@ const inviteStaff = asyncHandler(async function (req, res) {
     );
   }
 
+  // --- Fetch branch + role for email payload ---
   const branch = await Branch.findById(branch_id);
   const role = await Role.findById(role_id);
 
+  // --- Generate invite token ---
   const rawToken = generateToken();
   const tokenHash = sha256(rawToken);
   const nowUtc = new Date();
@@ -90,7 +92,8 @@ const inviteStaff = asyncHandler(async function (req, res) {
   const expiresAtStr = expiresAt.toISOString().slice(0, 19).replace("T", " ");
   const nowStr = nowUtc.toISOString().slice(0, 19).replace("T", " ");
 
-  const inviteId = await BranchUser.create({
+  // --- Persist invite ---
+  const inviteId = await BranchUser.invite({
     branch_id,
     clinic_id: clinicId,
     email,
@@ -107,6 +110,7 @@ const inviteStaff = asyncHandler(async function (req, res) {
     throw new Error("Failed to create invite.");
   }
 
+  // --- Queue invite email ---
   await emailQueue.add("sendEmail", {
     type: "INVITE_STAFF",
     payload: {
@@ -133,7 +137,7 @@ const acceptStaffInvite = asyncHandler(async function (req, res) {
   }
   const tokenHash = sha256(token);
 
-  const invite = await BranchUser.findByToken(tokenHash);
+  const invite = await BranchUser.findInviteTokenByToken(tokenHash);
 
   if (!invite) {
     res.status(404);
@@ -152,7 +156,7 @@ const acceptStaffInvite = asyncHandler(async function (req, res) {
   }
 
   if (new Date(invite.expires_at) < new Date()) {
-    await BranchUser.updateStatus(invite.id, "expired");
+    await BranchUser.updateInviteTokenStatus(invite.id, "expired");
     res.status(410);
     throw new Error("This invite link has expired.");
   }
@@ -168,7 +172,7 @@ const acceptStaffInvite = asyncHandler(async function (req, res) {
     throw new Error("Failed to add you to the branch.");
   }
 
-  await BranchUser.updateStatus(invite.id, "accepted");
+  await BranchUser.updateInviteTokenStatus(invite.id, "accepted");
 
   res.status(200);
   responseHandler(res, null, "Invite accepted successfully.");
@@ -185,7 +189,7 @@ const rejectStaffInvite = asyncHandler(async function (req, res) {
 
   const tokenHash = sha256(token);
 
-  const invite = await BranchUser.findByToken(tokenHash);
+  const invite = await BranchUser.findInviteTokenByToken(tokenHash);
 
   if (!invite) {
     res.status(404);
@@ -203,12 +207,12 @@ const rejectStaffInvite = asyncHandler(async function (req, res) {
   }
 
   if (new Date(invite.expires_at) < new Date()) {
-    await BranchUser.updateStatus(invite.id, "expired");
+    await BranchUser.updateInviteTokenStatus(invite.id, "expired");
     res.status(410);
     throw new Error("This invite link has expired.");
   }
 
-  await BranchUser.updateStatus(invite.id, "declined");
+  await BranchUser.updateInviteTokenStatus(invite.id, "declined");
 
   res.status(200);
   responseHandler(res, null, "Invite declined.");

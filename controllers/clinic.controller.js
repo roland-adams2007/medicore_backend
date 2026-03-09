@@ -14,9 +14,11 @@ const getClinics = asyncHandler(async function (req, res) {
 
   // merge, deduplicate — owned takes priority
   const allClinicMap = new Map();
-  for (const c of ownedClinics) allClinicMap.set(c.id, { ...c, _isOwner: true });
+  for (const c of ownedClinics)
+    allClinicMap.set(c.id, { ...c, _isOwner: true });
   for (const c of memberClinics) {
-    if (!allClinicMap.has(c.id)) allClinicMap.set(c.id, { ...c, _isOwner: false });
+    if (!allClinicMap.has(c.id))
+      allClinicMap.set(c.id, { ...c, _isOwner: false });
   }
 
   const clinics = await Promise.all(
@@ -30,7 +32,10 @@ const getClinics = asyncHandler(async function (req, res) {
         role = "owner";
         roles = ["owner"];
       } else {
-        const branchRoles = await BranchUser.findUserRolesAcrossClinic(clinic.id, userId);
+        const branchRoles = await BranchUser.findUserRolesAcrossClinic(
+          clinic.id,
+          userId,
+        );
         roles = [...new Set(branchRoles.map((r) => r.role_name))];
         role = roles[0] ?? null;
       }
@@ -60,7 +65,10 @@ const getClinic = asyncHandler(async function (req, res) {
     clinic.role = "owner";
     clinic.roles = ["owner"];
   } else {
-    const branchRoles = await BranchUser.findUserRolesAcrossClinic(clinicId, userId);
+    const branchRoles = await BranchUser.findUserRolesAcrossClinic(
+      clinicId,
+      userId,
+    );
     clinic.roles = [...new Set(branchRoles.map((r) => r.role_name))];
     clinic.role = clinic.roles[0] ?? null;
     if (!clinic.role) {
@@ -78,22 +86,52 @@ const createClinic = asyncHandler(async function (req, res) {
   const { name, email, phone, address, city, state_id, branch } = req.body;
   const nowUtc = new Date().toISOString().slice(0, 19).replace("T", " ");
 
-  if (!name) { res.status(400); throw new Error("Clinic name is required"); }
-  if (!branch?.name) { res.status(400); throw new Error("Branch name is required"); }
+  if (!name) {
+    res.status(400);
+    throw new Error("Clinic name is required");
+  }
+  if (!branch?.name) {
+    res.status(400);
+    throw new Error("Branch name is required");
+  }
 
   const clinicId = await Clinic.create({
-    name, email: email || null, phone: phone || null,
-    address: address || null, city: city || null, state_id: state_id || null,
-    owner_id: userId, uuid: generateUUID(), subscription_id: 1, is_active: 1, created_at: nowUtc,
+    name,
+    email: email || null,
+    phone: phone || null,
+    address: address || null,
+    city: city || null,
+    state_id: state_id || null,
+    owner_id: userId,
+    uuid: generateUUID(),
+    subscription_id: 1,
+    is_active: 1,
+    created_at: nowUtc,
   });
 
-  if (!clinicId) { res.status(500); throw new Error("Failed to create clinic"); }
+  if (!clinicId) {
+    res.status(500);
+    throw new Error("Failed to create clinic");
+  }
 
-  await Clinic.addClinicSub({ clinic_id: clinicId, subscription_id: 1, start_date: nowUtc, end_date: null, price_paid: 0, status: "active", created_at: nowUtc });
+  await Clinic.addClinicSub({
+    clinic_id: clinicId,
+    subscription_id: 1,
+    start_date: nowUtc,
+    end_date: null,
+    price_paid: 0,
+    status: "active",
+    created_at: nowUtc,
+  });
 
   await Branch.create({
-    clinic_id: clinicId, name: branch.name, address: branch.address || null,
-    phone: branch.phone || null, city: branch.city || null, state_id: branch.state_id || null, created_at: nowUtc,
+    clinic_id: clinicId,
+    name: branch.name,
+    address: branch.address || null,
+    phone: branch.phone || null,
+    city: branch.city || null,
+    state_id: branch.state_id || null,
+    created_at: nowUtc,
   });
 
   const newClinic = await Clinic.findById(clinicId);
@@ -111,14 +149,34 @@ const createBranch = asyncHandler(async function (req, res) {
   const { name, phone, address, city, state_id } = req.body;
   const nowUtc = new Date().toISOString().slice(0, 19).replace("T", " ");
 
-  if (!name) { res.status(400); throw new Error("Branch name is required"); }
+  if (!name) {
+    res.status(400);
+    throw new Error("Branch name is required");
+  }
 
   const clinic = await Clinic.findById(clinicId);
-  if (!clinic) { res.status(404); throw new Error("Clinic not found"); }
-  if (clinic.owner_id !== userId) { res.status(403); throw new Error("Only the clinic owner can add branches"); }
+  if (!clinic) {
+    res.status(404);
+    throw new Error("Clinic not found");
+  }
+  if (clinic.owner_id !== userId) {
+    res.status(403);
+    throw new Error("Only the clinic owner can add branches");
+  }
 
-  const branchId = await Branch.create({ clinic_id: clinicId, name, phone: phone || null, address: address || null, city: city || null, state_id: state_id || null, created_at: nowUtc });
-  if (!branchId) { res.status(500); throw new Error("Failed to create branch"); }
+  const branchId = await Branch.create({
+    clinic_id: clinicId,
+    name,
+    phone: phone || null,
+    address: address || null,
+    city: city || null,
+    state_id: state_id || null,
+    created_at: nowUtc,
+  });
+  if (!branchId) {
+    res.status(500);
+    throw new Error("Failed to create branch");
+  }
 
   const newBranch = await Branch.findById(branchId, clinicId);
   res.status(201);
@@ -130,17 +188,29 @@ const getSubscription = asyncHandler(async function (req, res) {
   const userId = req.user?.id;
 
   const clinic = await Clinic.findById(clinicId);
-  if (!clinic) { res.status(404); throw new Error("Clinic not found"); }
+  if (!clinic) {
+    res.status(404);
+    throw new Error("Clinic not found");
+  }
 
   // must be owner or staff of this clinic
   const isOwner = clinic.owner_id === userId;
   if (!isOwner) {
-    const branchRoles = await BranchUser.findUserRolesAcrossClinic(clinicId, userId);
-    if (!branchRoles.length) { res.status(403); throw new Error("Access denied"); }
+    const branchRoles = await BranchUser.findUserRolesAcrossClinic(
+      clinicId,
+      userId,
+    );
+    if (!branchRoles.length) {
+      res.status(403);
+      throw new Error("Access denied");
+    }
   }
 
   const sub = await Subscription.getActiveWithPermissions(clinicId);
-  if (!sub) { res.status(404); throw new Error("No active subscription found"); }
+  if (!sub) {
+    res.status(404);
+    throw new Error("No active subscription found");
+  }
 
   // attach current usage counts
   sub.current_branches = await Subscription.countBranches(clinicId);
@@ -150,4 +220,94 @@ const getSubscription = asyncHandler(async function (req, res) {
   responseHandler(res, { subscription: sub });
 });
 
-module.exports = { getClinics, getClinic, createClinic, createBranch, getSubscription };
+const getStaffInvitations = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
+  const clinicId = parseInt(req.params.clinicId, 10);
+  const branchId = parseInt(req.params.branchId, 10);
+
+  // --- Query params ---
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+  const search = req.query.search?.trim() || null;
+  const roleId = req.query.role_id ? parseInt(req.query.role_id, 10) : null;
+  const status = req.query.status || null; // pending | accepted | expired | cancelled
+
+  const { staffInvites, total } =
+    await BranchUser.findStaffInviteByClinicAndBranch({
+      clinicId,
+      branchId,
+      search,
+      roleId,
+      status,
+      limit,
+      offset,
+    });
+
+  const totalPages = Math.ceil(total / limit);
+
+  res.status(200);
+  responseHandler(res, {
+    staffInvites,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    },
+  });
+});
+
+const getStaffs = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
+  const clinicId = parseInt(req.params.clinicId, 10);
+  const branchId = parseInt(req.params.branchId, 10);
+
+  // --- Query params ---
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+  const search = req.query.search?.trim() || null;
+  const roleId = req.query.role_id ? parseInt(req.query.role_id, 10) : null;
+  const status = req.query.status || null; // active | suspended | terminated | resigned
+  const departmentId = req.query.department_id
+    ? parseInt(req.query.department_id, 10)
+    : null;
+
+  const { staff, total } = await BranchUser.findStaffByBranch({
+    clinicId,
+    branchId,
+    search,
+    roleId,
+    status,
+    departmentId,
+    limit,
+    offset,
+  });
+
+  const totalPages = Math.ceil(total / limit);
+
+  res.status(200);
+  responseHandler(res, {
+    staff,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    },
+  });
+});
+module.exports = {
+  getClinics,
+  getClinic,
+  createClinic,
+  createBranch,
+  getSubscription,
+  getStaffs,
+  getStaffInvitations,
+};

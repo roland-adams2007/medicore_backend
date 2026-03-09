@@ -299,3 +299,40 @@ CREATE TABLE IF NOT EXISTS branch_user_invites (
   INDEX idx_invite_email (email),
   INDEX idx_invite_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS departments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  uuid CHAR(36) NOT NULL UNIQUE,
+
+  branch_id BIGINT UNSIGNED NOT NULL,
+
+  name VARCHAR(150) NOT NULL,
+  description TEXT NULL,
+
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+
+  UNIQUE KEY uq_branch_department (branch_id, name),
+
+  INDEX idx_department_branch (branch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE IF NOT EXISTS staff_departments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+  staff_profile_id BIGINT UNSIGNED NOT NULL,
+  department_id BIGINT UNSIGNED NOT NULL,
+
+  assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (staff_profile_id) REFERENCES staff_profiles(id) ON DELETE CASCADE,
+  FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE CASCADE,
+
+  UNIQUE KEY uq_staff_department (staff_profile_id, department_id),
+
+  INDEX idx_staff_department_staff (staff_profile_id),
+  INDEX idx_staff_department_department (department_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
