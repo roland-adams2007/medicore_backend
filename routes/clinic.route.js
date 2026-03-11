@@ -13,6 +13,9 @@ const {
 const {
   getInviteForSetup,
   setupStaffProfile,
+  getStaffProfileForEdit,
+  updateStaffProfile,
+  getClinicStaff,
   resendInvite,
 } = require("../controllers/staff_setup.controller");
 const {
@@ -32,6 +35,13 @@ router.post(
   checkSubscriptionFeature("branches.create"),
   checkSubscriptionLimit("branches"),
   createBranch,
+);
+
+router.get(
+  "/:clinicId/staff",
+  validateTokenHandler,
+  checkSubscriptionFeature("staff.view"),
+  getClinicStaff,
 );
 
 router.get(
@@ -67,6 +77,20 @@ router.post(
   validateTokenHandler,
   checkRolePermission("staff.create"),
   resendInvite,
+);
+
+router.get(
+  "/:clinicId/branches/:branchId/staff/profiles/:staffId",
+  validateTokenHandler,
+  checkRolePermission("staff.edit"),
+  getStaffProfileForEdit,
+);
+
+router.put(
+  "/:clinicId/branches/:branchId/staff/profiles/:staffId",
+  validateTokenHandler,
+  checkRolePermission("staff.edit"),
+  updateStaffProfile,
 );
 
 module.exports = router;

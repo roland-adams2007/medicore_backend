@@ -41,6 +41,7 @@ app.use("/states", require("./routes/state.route"));
 app.use("/subscriptions", require("./routes/subscription.route"));
 app.use("/branch_users", require("./routes/branch_user.route"));
 app.use("/roles", require("./routes/role.route"));
+app.use("/assets", require("./routes/asset.route"));
 
 app.use((req, res, next) => {
   return res.status(404).json({

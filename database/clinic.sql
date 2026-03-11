@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS branch_user_invites (
   status ENUM('pending','accepted','declined','expired') DEFAULT 'pending',
 
   expires_at DATETIME NOT NULL,
-  accepted_at DATETIME NULL,
+  accepted_at DATETIME NULL, 
 
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
@@ -335,4 +335,42 @@ CREATE TABLE IF NOT EXISTS staff_departments (
 
   INDEX idx_staff_department_staff (staff_profile_id),
   INDEX idx_staff_department_department (department_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS clinic_assets (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  clinic_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  file_uuid CHAR(36) NOT NULL UNIQUE,
+  file_original_name VARCHAR(255) NULL,
+  file_name VARCHAR(255) NULL,
+  file_url VARCHAR(512) NOT NULL,
+  file_size BIGINT UNSIGNED NULL,
+  mime_type VARCHAR(120) NULL,
+  extension VARCHAR(20) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL,
+  FOREIGN KEY (clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_clinic_assets_clinic (clinic_id),
+  INDEX idx_clinic_assets_user (user_id),
+  INDEX idx_clinic_assets_deleted (deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asset_transfers (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  asset_id BIGINT UNSIGNED NOT NULL,
+  sender_id BIGINT UNSIGNED NOT NULL,
+  receiver_id BIGINT UNSIGNED NOT NULL,
+  message VARCHAR(500) NULL,
+  status ENUM('sent','received','declined') DEFAULT 'sent',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  received_at DATETIME NULL,
+  FOREIGN KEY (asset_id) REFERENCES clinic_assets(id) ON DELETE CASCADE,
+  FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_transfer_sender (sender_id),
+  INDEX idx_transfer_receiver (receiver_id),
+  INDEX idx_transfer_asset (asset_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
