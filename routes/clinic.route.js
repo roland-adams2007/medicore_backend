@@ -19,6 +19,12 @@ const {
   resendInvite,
 } = require("../controllers/staff_setup.controller");
 const {
+  getBranchDepartments,
+  createDepartment,
+  updateDepartment,
+  deleteDepartment,
+} = require("../controllers/department.controller");
+const {
   checkSubscriptionLimit,
   checkSubscriptionFeature,
 } = require("../middleware/subscriptionGuard");
@@ -91,6 +97,33 @@ router.put(
   validateTokenHandler,
   checkRolePermission("staff.edit"),
   updateStaffProfile,
+);
+
+router.get(
+  "/:clinicId/branches/:branchId/departments",
+  validateTokenHandler,
+  getBranchDepartments,
+);
+
+router.post(
+  "/:clinicId/branches/:branchId/departments",
+  validateTokenHandler,
+  checkRolePermission("staff.edit"),
+  createDepartment,
+);
+
+router.put(
+  "/:clinicId/branches/:branchId/departments/:deptId",
+  validateTokenHandler,
+  checkRolePermission("staff.edit"),
+  updateDepartment,
+);
+
+router.delete(
+  "/:clinicId/branches/:branchId/departments/:deptId",
+  validateTokenHandler,
+  checkRolePermission("staff.edit"),
+  deleteDepartment,
 );
 
 module.exports = router;

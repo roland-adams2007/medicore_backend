@@ -16,6 +16,24 @@ const getActorRoleInClinic = async (userId, clinicId) => {
   return await BranchUser.findUserRoleInClinic(clinicId, userId);
 };
 
+const parseDepartmentIds = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((id) => parseInt(id, 10)).filter((id) => !isNaN(id) && id > 0);
+  }
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((id) => parseInt(id, 10)).filter((id) => !isNaN(id) && id > 0);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 const getInviteForSetup = asyncHandler(async function (req, res) {
   const inviteId = parseInt(req.params.inviteId, 10);
 
@@ -53,9 +71,9 @@ const setupStaffProfile = asyncHandler(async function (req, res) {
   const inviteId = parseInt(req.params.inviteId, 10);
   const actorId = req.user?.id;
 
-  if (!inviteId) {
+  if (!inviteId || isNaN(inviteId)) {
     res.status(400);
-    throw new Error("Invite ID is required.");
+    throw new Error("Valid Invite ID is required.");
   }
 
   const invite = await BranchUser.findInviteById(inviteId);
@@ -82,21 +100,38 @@ const setupStaffProfile = asyncHandler(async function (req, res) {
     throw new Error("No user account is linked to this invitation email.");
   }
 
-  const actorRole = await getActorRoleInClinic(actorId, invite.clinic_id);
-  if (!actorRole) {
-    res.status(403);
-    throw new Error("You do not have a role in this clinic.");
+  const clinic = await Clinic.findById(invite.clinic_id);
+
+  if (!clinic) {
+    res.status(404);
+    throw new Error("Clinic not found.");
   }
 
-  const canManage = await Role.canActorManageTarget(
-    actorRole.role_id,
-    invite.role_id,
-  );
-  if (!canManage) {
-    res.status(403);
-    throw new Error(
-      "You cannot set up a profile for a staff member with an equal or higher role.",
-    );
+  const isOwner = clinic.owner_id === actorId;
+
+  let actorRole = null;
+
+  if (!isOwner) {
+    actorRole = await getActorRoleInClinic(actorId, invite.clinic_id);
+
+    if (!actorRole) {
+      res.status(403);
+      throw new Error("You do not have a role in this clinic.");
+    }
+
+    if (invite.role_id) {
+      const canManage = await Role.canActorManageTarget(
+        actorRole.role_id,
+        invite.role_id,
+      );
+
+      if (!canManage) {
+        res.status(403);
+        throw new Error(
+          "You cannot set up a profile for a staff member with an equal or higher role.",
+        );
+      }
+    }
   }
 
   const {
@@ -121,11 +156,13 @@ const setupStaffProfile = asyncHandler(async function (req, res) {
     emergency_contact_phone,
     emergency_contact_relationship,
     notes,
+    department_ids,
   } = req.body;
 
   const result = await BranchUser.createStaffProfile({
     user_id: invite.invited_user_id,
     clinic_id: invite.clinic_id,
+    role_id: invite.role_id,
     phone,
     alt_phone,
     gender,
@@ -152,6 +189,11 @@ const setupStaffProfile = asyncHandler(async function (req, res) {
   if (!result) {
     res.status(500);
     throw new Error("Failed to save staff profile.");
+  }
+
+  const parsedDeptIds = parseDepartmentIds(department_ids);
+  if (parsedDeptIds.length > 0) {
+    await BranchUser.syncStaffDepartments(result.id, parsedDeptIds);
   }
 
   res.status(200);
@@ -190,9 +232,14 @@ const updateStaffProfile = asyncHandler(async function (req, res) {
   const clinicId = parseInt(req.params.clinicId, 10);
   const actorId = req.user?.id;
 
-  if (!staffProfileId) {
+  if (!staffProfileId || isNaN(staffProfileId)) {
     res.status(400);
-    throw new Error("Staff ID is required.");
+    throw new Error("Valid Staff ID is required.");
+  }
+
+  if (!clinicId || isNaN(clinicId)) {
+    res.status(400);
+    throw new Error("Valid Clinic ID is required.");
   }
 
   const profile = await BranchUser.findStaffProfileById(
@@ -205,24 +252,37 @@ const updateStaffProfile = asyncHandler(async function (req, res) {
     throw new Error("Staff profile not found.");
   }
 
-  const actorRole = await getActorRoleInClinic(actorId, clinicId);
-  responseHandler(res, { actorRole, actorId, clinicId }, "JII", 403);
-  return;
-  if (!actorRole) {
-    res.status(403);
-    throw new Error("You do not have a role in this clinic.");
+  const clinic = await Clinic.findById(clinicId);
+
+  if (!clinic) {
+    res.status(404);
+    throw new Error("Clinic not found.");
   }
 
-  if (profile.role_id) {
-    const canManage = await Role.canActorManageTarget(
-      actorRole.role_id,
-      profile.role_id,
-    );
-    if (!canManage) {
+  const isOwner = clinic.owner_id === actorId;
+
+  let actorRole = null;
+
+  if (!isOwner) {
+    actorRole = await getActorRoleInClinic(actorId, clinicId);
+
+    if (!actorRole) {
       res.status(403);
-      throw new Error(
-        "You cannot edit a staff member with an equal or higher role.",
+      throw new Error("You do not have a role in this clinic.");
+    }
+
+    if (profile.role_id) {
+      const canManage = await Role.canActorManageTarget(
+        actorRole.role_id,
+        profile.role_id,
       );
+
+      if (!canManage) {
+        res.status(403);
+        throw new Error(
+          "You cannot edit a staff member with an equal or higher role.",
+        );
+      }
     }
   }
 
@@ -250,23 +310,34 @@ const updateStaffProfile = asyncHandler(async function (req, res) {
     notes,
     status,
     new_role_id,
+    department_ids,
   } = req.body;
 
   if (new_role_id && new_role_id !== profile.role_id) {
-    const canAssignNewRole = await Role.canActorManageTarget(
-      actorRole.role_id,
-      parseInt(new_role_id, 10),
-    );
-    if (!canAssignNewRole) {
-      res.status(403);
-      throw new Error("You cannot assign a role equal to or above your own.");
+    const parsedNewRoleId = parseInt(new_role_id, 10);
+
+    if (isNaN(parsedNewRoleId)) {
+      res.status(400);
+      throw new Error("Invalid new role ID.");
+    }
+
+    if (!isOwner) {
+      const canAssignNewRole = await Role.canActorManageTarget(
+        actorRole.role_id,
+        parsedNewRoleId,
+      );
+
+      if (!canAssignNewRole) {
+        res.status(403);
+        throw new Error("You cannot assign a role equal to or above your own.");
+      }
     }
 
     if (profile.branch_id) {
       await BranchUser.updateStaffRole(
         profile.user_id,
         profile.branch_id,
-        new_role_id,
+        parsedNewRoleId,
       );
     }
   }
@@ -300,6 +371,9 @@ const updateStaffProfile = asyncHandler(async function (req, res) {
     res.status(500);
     throw new Error("Failed to update staff profile.");
   }
+
+  const parsedDeptIds = parseDepartmentIds(department_ids);
+  await BranchUser.syncStaffDepartments(staffProfileId, parsedDeptIds);
 
   res.status(200);
   responseHandler(res, {
