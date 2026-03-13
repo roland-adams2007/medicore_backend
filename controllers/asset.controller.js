@@ -187,6 +187,29 @@ const getMyTransfers = asyncHandler(async function (req, res) {
   responseHandler(res, { transfers });
 });
 
+const downloadClinicAsset = asyncHandler(async function (req, res) {
+  const clinicId = parseInt(req.params.clinicId, 10);
+  const assetId = parseInt(req.params.assetId, 10);
+
+  const asset = await Asset.findById(assetId);
+
+  if (!asset || asset.clinic_id !== clinicId) {
+    res.status(404);
+    throw new Error("Asset not found");
+  }
+
+  const response = await axios.get(asset.file_url, { responseType: "stream" });
+
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${asset.file_original_name}"`,
+  );
+  res.setHeader("Content-Type", asset.mime_type || "application/octet-stream");
+  if (asset.file_size) res.setHeader("Content-Length", asset.file_size);
+
+  response.data.pipe(res);
+});
+
 module.exports = {
   uploadClinicAsset,
   getClinicAssets,
@@ -195,4 +218,5 @@ module.exports = {
   getAssetTransfers,
   updateTransferStatus,
   getMyTransfers,
+  downloadClinicAsset,
 };

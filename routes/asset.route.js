@@ -9,49 +9,48 @@ const {
   getAssetTransfers,
   updateTransferStatus,
   getMyTransfers,
+  downloadClinicAsset,
 } = require("../controllers/asset.controller");
 const { checkRolePermission } = require("../middleware/rolePermission");
 
-router.get(
-  "/:clinicId/assets",
-  validateTokenHandler,
-  getClinicAssets
-);
+router.get("/:clinicId/assets", validateTokenHandler, getClinicAssets);
 
 router.post(
   "/:clinicId/assets/upload",
   validateTokenHandler,
-  uploadClinicAsset
+  uploadClinicAsset,
 );
 
 router.delete(
   "/:clinicId/assets/:assetId",
   validateTokenHandler,
-  deleteClinicAsset
+  deleteClinicAsset,
 );
 
 router.post(
   "/:clinicId/assets/:assetId/transfer",
   validateTokenHandler,
-  transferAsset
+  transferAsset,
 );
 
 router.get(
   "/:clinicId/assets/:assetId/transfers",
   validateTokenHandler,
-  getAssetTransfers
+  getAssetTransfers,
 );
 
 router.patch(
   "/:clinicId/assets/transfers/:transferId/status",
   validateTokenHandler,
-  updateTransferStatus
+  updateTransferStatus,
 );
 
+router.get("/my-transfers", validateTokenHandler, getMyTransfers);
+
 router.get(
-  "/my-transfers",
+  "/:clinicId/assets/:assetId/download",
   validateTokenHandler,
-  getMyTransfers
+  downloadClinicAsset,
 );
 
 module.exports = router;
