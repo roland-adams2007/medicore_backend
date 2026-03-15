@@ -15,12 +15,13 @@ const { system } = require("../config/config.inc.js");
 
 const { checkEmailRateLimit } = require("../utils/emailRateLimit.js");
 const Clinic = require("../models/clinic.model.js");
+const cache = require("../utils/cache.js");
 
 const sha256 = (value) =>
   crypto.createHash("sha256").update(value).digest("hex");
 
 const loginUser = asyncHandler(async function (req, res) {
-  const { email, password } = req.body;
+  const { email, password, remember } = req.body;
 
   const ipAddress =
     (req.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
@@ -376,14 +377,34 @@ const verifyUser = asyncHandler(async function (req, res) {
 
 const userCompanyCheck = asyncHandler(async function (req, res) {
   const userId = req.user?.id;
+  const cacheKey = `user:${userId}:clinics`;
+
+  // Return cached clinics if available
+  const cachedClinics = await cache.get(cacheKey);
+  if (cachedClinics) {
+    return responseHandler(res, { clinics: cachedClinics }, "User clinics");
+  }
+
   const clinics = await Clinic.findForUser(userId);
+
+  // Cache the result for 5 minutes
+  await cache.set(cacheKey, clinics || [], 86400);
+
   res.status(200);
   responseHandler(res, { clinics: clinics || [] }, "User clinics");
 });
 
 const currentUser = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
+  const cacheKey = `user:${userId}`;
+  const cachedUser = await cache.get(cacheKey);
+  if (cachedUser) {
+    return responseHandler(res, cachedUser, "Current user");
+  }
+  const user = await User.findById(userId);
+  await cache.set(cacheKey, user, 86400);
   res.status(200);
-  responseHandler(res, req.user, "Current user");
+  responseHandler(res, user, "Current user");
 });
 
 const updateProfile = asyncHandler(async function (req, res) {
@@ -429,6 +450,10 @@ const updateProfile = asyncHandler(async function (req, res) {
     res.status(500);
     throw new Error("Failed to update profile");
   }
+
+  // Bust user and clinics cache so stale data isn't served
+  await cache.del(`user:${userId}`);
+  await cache.del(`user:${userId}:clinics`);
 
   const updatedUser = await User.findById(userId);
   res.status(200);

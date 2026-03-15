@@ -29,8 +29,9 @@ const Subscription = {
   getPermissions: async (subscriptionId) => {
     try {
       const [rows] = await db_connection.execute(
-        `SELECT DISTINCT permission_name
-         FROM vw_subscription_permissions
+        `SELECT DISTINCT p.name as permission_name
+         FROM subscription_permissions sp
+         JOIN permissions p ON p.id = sp.permission_id 
          WHERE subscription_id = ?`,
         [subscriptionId],
       );

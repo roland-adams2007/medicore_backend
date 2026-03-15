@@ -3,6 +3,7 @@ const { responseHandler } = require("../middleware/responseHandler.js");
 const { db_connection } = require("../config/config.inc");
 const BranchUser = require("../models/branch_user.model.js");
 const Clinic = require("../models/clinic.model.js");
+const cache = require("../utils/cache.js");
 
 const getBranchDepartments = asyncHandler(async function (req, res) {
   const clinicId = parseInt(req.params.clinicId, 10);
@@ -34,6 +35,13 @@ const getBranchDepartments = asyncHandler(async function (req, res) {
     }
   }
 
+  const cacheKey = `clinic:${clinicId}:branch:${branchId}:departments`;
+
+  const cachedDepartments = await cache.get(cacheKey);
+  if (cachedDepartments) {
+    return responseHandler(res, { departments: cachedDepartments }, "Departments");
+  }
+
   const [rows] = await db_connection.execute(
     `SELECT d.id, d.uuid, d.name, d.description, d.created_at,
             COUNT(DISTINCT sd.staff_profile_id) AS staff_count
@@ -44,6 +52,8 @@ const getBranchDepartments = asyncHandler(async function (req, res) {
      ORDER BY d.name ASC`,
     [branchId],
   );
+
+  await cache.set(cacheKey, rows || [], 86400);
 
   res.status(200);
   responseHandler(res, { departments: rows || [] });
@@ -93,6 +103,9 @@ const createDepartment = asyncHandler(async function (req, res) {
     [result.insertId],
   );
 
+  // Bust departments cache for this branch
+  await cache.del(`clinic:${clinicId}:branch:${branchId}:departments`);
+
   res.status(201);
   responseHandler(res, { department: dept });
 });
@@ -139,6 +152,9 @@ const updateDepartment = asyncHandler(async function (req, res) {
     [name.trim(), description?.trim() || null, deptId],
   );
 
+  // Bust departments cache for this branch
+  await cache.del(`clinic:${clinicId}:branch:${branchId}:departments`);
+
   res.status(200);
   responseHandler(res, { message: "Department updated." });
 });
@@ -175,6 +191,9 @@ const deleteDepartment = asyncHandler(async function (req, res) {
   }
 
   await db_connection.execute(`DELETE FROM departments WHERE id = ?`, [deptId]);
+
+  // Bust departments cache for this branch
+  await cache.del(`clinic:${clinicId}:branch:${branchId}:departments`);
 
   res.status(200);
   responseHandler(res, { message: "Department deleted." });

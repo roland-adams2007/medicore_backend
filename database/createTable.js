@@ -30,3 +30,5 @@ async function runMigrations() {
 }
 
 module.exports = runMigrations;
+
+//Appointment → Visit → Vitals → Diagnosis → Prescription → Lab → Billing

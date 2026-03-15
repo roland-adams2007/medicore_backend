@@ -10,10 +10,14 @@ const {
   updateTransferStatus,
   getMyTransfers,
   downloadClinicAsset,
+  getStorageStats,
 } = require("../controllers/asset.controller");
-const { checkRolePermission } = require("../middleware/rolePermission");
+
+router.get("/my-transfers", validateTokenHandler, getMyTransfers);
 
 router.get("/:clinicId/assets", validateTokenHandler, getClinicAssets);
+
+router.get("/:clinicId/storage", validateTokenHandler, getStorageStats);
 
 router.post(
   "/:clinicId/assets/upload",
@@ -44,8 +48,6 @@ router.patch(
   validateTokenHandler,
   updateTransferStatus,
 );
-
-router.get("/my-transfers", validateTokenHandler, getMyTransfers);
 
 router.get(
   "/:clinicId/assets/:assetId/download",

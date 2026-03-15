@@ -3,7 +3,7 @@ const { responseHandler } = require("../middleware/responseHandler.js");
 const Asset = require("../models/asset.model.js");
 const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
-const { file_config } = require("../config/config.inc.js");
+const { file_config, db_connection } = require("../config/config.inc.js");
 
 const uploadClinicAsset = asyncHandler(async function (req, res) {
   const userId = req.user?.id;
@@ -72,19 +72,27 @@ const uploadClinicAsset = asyncHandler(async function (req, res) {
 });
 
 const getClinicAssets = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
   const clinicId = parseInt(req.params.clinicId, 10);
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const search = req.query.search?.trim() || null;
   const mimeType = req.query.mime_type || null;
 
-  const { assets, total } = await Asset.findByClinic({
+  if (!userId) {
+    res.status(401);
+    throw new Error("User not authenticated");
+  }
+
+  const { assets, total } = await Asset.findByClinicAndUser({
     clinicId,
+    userId,
     page,
     limit,
     search,
     mimeType,
   });
+
   const totalPages = Math.ceil(total / limit);
 
   res.status(200);
@@ -102,14 +110,17 @@ const getClinicAssets = asyncHandler(async function (req, res) {
 });
 
 const deleteClinicAsset = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
   const clinicId = parseInt(req.params.clinicId, 10);
   const assetId = parseInt(req.params.assetId, 10);
 
-  const deleted = await Asset.delete(assetId, clinicId);
+  const deleted = await Asset.deleteOwnedByUser(assetId, clinicId, userId);
 
   if (!deleted) {
     res.status(404);
-    throw new Error("Asset not found or already deleted");
+    throw new Error(
+      "Asset not found, already deleted, or you do not have permission to delete it",
+    );
   }
 
   res.status(200);
@@ -128,9 +139,15 @@ const transferAsset = asyncHandler(async function (req, res) {
   }
 
   const asset = await Asset.findById(assetId);
+
   if (!asset || asset.clinic_id !== clinicId) {
     res.status(404);
     throw new Error("Asset not found");
+  }
+
+  if (asset.user_id !== senderId) {
+    res.status(403);
+    throw new Error("You do not have permission to transfer this asset");
   }
 
   const nowUtc = new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -188,6 +205,7 @@ const getMyTransfers = asyncHandler(async function (req, res) {
 });
 
 const downloadClinicAsset = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
   const clinicId = parseInt(req.params.clinicId, 10);
   const assetId = parseInt(req.params.assetId, 10);
 
@@ -196,6 +214,16 @@ const downloadClinicAsset = asyncHandler(async function (req, res) {
   if (!asset || asset.clinic_id !== clinicId) {
     res.status(404);
     throw new Error("Asset not found");
+  }
+
+  const isOwner = asset.user_id === userId;
+  if (!isOwner) {
+    const transfers = await Asset.findTransfersByReceiver(userId);
+    const hasAccess = transfers.some((t) => t.asset_id === assetId);
+    if (!hasAccess) {
+      res.status(403);
+      throw new Error("You do not have permission to download this asset");
+    }
   }
 
   const response = await axios.get(asset.file_url, { responseType: "stream" });
@@ -210,6 +238,38 @@ const downloadClinicAsset = asyncHandler(async function (req, res) {
   response.data.pipe(res);
 });
 
+const getStorageStats = asyncHandler(async function (req, res) {
+  const userId = req.user?.id;
+  const clinicId = parseInt(req.params.clinicId, 10);
+
+  const [[usageRow]] = await db_connection.execute(
+    `SELECT COALESCE(SUM(file_size), 0) AS used_bytes
+     FROM clinic_assets
+     WHERE clinic_id = ? AND user_id = ? AND deleted_at IS NULL`,
+    [clinicId, userId],
+  );
+
+  const [[subRow]] = await db_connection.execute(
+    `SELECT s.max_storage_mb
+     FROM clinics c
+     LEFT JOIN subscriptions s ON s.id = c.subscription_id
+     WHERE c.id = ?
+     LIMIT 1`,
+    [clinicId],
+  );
+
+  const usedBytes = Number(usageRow.used_bytes);
+  const maxBytes = subRow?.max_storage_mb
+    ? subRow.max_storage_mb * 1024 * 1024
+    : null;
+
+  res.status(200);
+  responseHandler(res, {
+    used_bytes: usedBytes,
+    max_bytes: maxBytes,
+  });
+});
+
 module.exports = {
   uploadClinicAsset,
   getClinicAssets,
@@ -219,4 +279,5 @@ module.exports = {
   updateTransferStatus,
   getMyTransfers,
   downloadClinicAsset,
+  getStorageStats,
 };

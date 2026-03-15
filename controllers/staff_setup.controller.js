@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const emailQueue = require("../services/queues/email.queue.js");
 const { checkEmailRateLimit } = require("../utils/emailRateLimit.js");
 const generateToken = require("../utils/generateToken.js");
+const cache = require("../utils/cache.js");
 
 const sha256 = (value) =>
   crypto.createHash("sha256").update(value).digest("hex");
@@ -19,13 +20,17 @@ const getActorRoleInClinic = async (userId, clinicId) => {
 const parseDepartmentIds = (raw) => {
   if (!raw) return [];
   if (Array.isArray(raw)) {
-    return raw.map((id) => parseInt(id, 10)).filter((id) => !isNaN(id) && id > 0);
+    return raw
+      .map((id) => parseInt(id, 10))
+      .filter((id) => !isNaN(id) && id > 0);
   }
   if (typeof raw === "string") {
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed.map((id) => parseInt(id, 10)).filter((id) => !isNaN(id) && id > 0);
+        return parsed
+          .map((id) => parseInt(id, 10))
+          .filter((id) => !isNaN(id) && id > 0);
       }
     } catch {
       return [];
@@ -196,6 +201,9 @@ const setupStaffProfile = asyncHandler(async function (req, res) {
     await BranchUser.syncStaffDepartments(result.id, parsedDeptIds);
   }
 
+  // Bust clinic staff cache — new profile was just created
+  await cache.del(`clinic:${invite.clinic_id}:staff`);
+
   res.status(200);
   responseHandler(res, {
     message: "Staff profile created.",
@@ -207,10 +215,16 @@ const setupStaffProfile = asyncHandler(async function (req, res) {
 const getStaffProfileForEdit = asyncHandler(async function (req, res) {
   const staffProfileId = parseInt(req.params.staffId, 10);
   const clinicId = parseInt(req.params.clinicId, 10);
+  const cacheKey = `clinic:${clinicId}:staff:${staffProfileId}:profile`;
 
   if (!staffProfileId) {
     res.status(400);
     throw new Error("Staff ID is required.");
+  }
+
+  const cachedProfile = await cache.get(cacheKey);
+  if (cachedProfile) {
+    return responseHandler(res, { profile: cachedProfile }, "Staff profile");
   }
 
   const profile = await BranchUser.findStaffProfileById(
@@ -222,6 +236,8 @@ const getStaffProfileForEdit = asyncHandler(async function (req, res) {
     res.status(404);
     throw new Error("Staff profile not found.");
   }
+
+  await cache.set(cacheKey, profile, 86400);
 
   res.status(200);
   responseHandler(res, { profile });
@@ -375,6 +391,11 @@ const updateStaffProfile = asyncHandler(async function (req, res) {
   const parsedDeptIds = parseDepartmentIds(department_ids);
   await BranchUser.syncStaffDepartments(staffProfileId, parsedDeptIds);
 
+  // Bust individual staff profile cache
+  await cache.del(`clinic:${clinicId}:staff:${staffProfileId}:profile`);
+  // Bust clinic-wide staff list cache
+  await cache.del(`clinic:${clinicId}:staff`);
+
   res.status(200);
   responseHandler(res, {
     message: "Staff profile updated.",
@@ -391,6 +412,7 @@ const getClinicStaff = asyncHandler(async function (req, res) {
   const status = req.query.status || null;
   const offset = (page - 1) * limit;
 
+  // Paginated + filtered — skip caching to always reflect current staff status
   const { staff, total } = await BranchUser.findStaffByClinic({
     clinicId,
     search,

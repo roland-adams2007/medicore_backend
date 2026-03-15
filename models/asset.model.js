@@ -32,6 +32,54 @@ const Asset = {
     }
   },
 
+  /**
+   * Fetch assets scoped to a specific user within a clinic.
+   * Used when a staff member should only see their own uploads.
+   */
+  findByClinicAndUser: async ({ clinicId, userId, page = 1, limit = 20, search = null, mimeType = null }) => {
+    try {
+      const offset = (page - 1) * limit;
+      const params = [clinicId, userId];
+      const conditions = ["ca.clinic_id = ?", "ca.user_id = ?", "ca.deleted_at IS NULL"];
+
+      if (search) {
+        conditions.push("ca.file_original_name LIKE ?");
+        params.push(`%${search}%`);
+      }
+      if (mimeType) {
+        conditions.push("ca.mime_type LIKE ?");
+        params.push(`${mimeType}%`);
+      }
+
+      const where = conditions.join(" AND ");
+
+      const [[{ total }]] = await db_connection.execute(
+        `SELECT COUNT(*) AS total FROM clinic_assets ca WHERE ${where}`,
+        [...params]
+      );
+
+      if (total === 0) return { assets: [], total: 0 };
+
+      const [rows] = await db_connection.execute(
+        `SELECT ca.*, u.fname, u.lname, u.email AS owner_email
+         FROM clinic_assets ca
+         LEFT JOIN users u ON u.id = ca.user_id
+         WHERE ${where}
+         ORDER BY ca.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+
+      return { assets: rows, total };
+    } catch (error) {
+      console.error("Error in Asset.findByClinicAndUser:", error);
+      return { assets: [], total: 0 };
+    }
+  },
+
+  /**
+   * Fetch all assets in a clinic (admin/owner view).
+   */
   findByClinic: async ({ clinicId, page = 1, limit = 20, search = null, mimeType = null }) => {
     try {
       const offset = (page - 1) * limit;
@@ -85,6 +133,23 @@ const Asset = {
       return result.affectedRows > 0;
     } catch (error) {
       console.error("Error in Asset.delete:", error);
+      return false;
+    }
+  },
+
+  /**
+   * Delete only if the asset belongs to the given user (ownership check).
+   */
+  deleteOwnedByUser: async (id, clinicId, userId) => {
+    try {
+      const nowUtc = new Date().toISOString().slice(0, 19).replace("T", " ");
+      const [result] = await db_connection.execute(
+        `UPDATE clinic_assets SET deleted_at = ? WHERE id = ? AND clinic_id = ? AND user_id = ?`,
+        [nowUtc, id, clinicId, userId]
+      );
+      return result.affectedRows > 0;
+    } catch (error) {
+      console.error("Error in Asset.deleteOwnedByUser:", error);
       return false;
     }
   },

@@ -5,6 +5,58 @@ const Branch = require("../models/branch.model.js");
 const BranchUser = require("../models/branch_user.model.js");
 const Subscription = require("../models/subscription.model.js");
 const generateUUID = require("../utils/generateUUID.js");
+const cache = require("../utils/cache.js");
+
+// const getClinics = asyncHandler(async function (req, res) {
+//   const userId = req.user?.id;
+//   const cacheKey = `user:${userId}:clinics:full`;
+
+//   const cachedClinics = await cache.get(cacheKey);
+//   if (cachedClinics) {
+//     return responseHandler(res, { clinics: cachedClinics }, "Clinics");
+//   }
+
+//   const ownedClinics = await Clinic.findForUser(userId);
+//   const memberClinics = await Clinic.findForBranchMember(userId);
+
+//   // merge, deduplicate — owned takes priority
+//   const allClinicMap = new Map();
+//   for (const c of ownedClinics)
+//     allClinicMap.set(c.id, { ...c, _isOwner: true });
+//   for (const c of memberClinics) {
+//     if (!allClinicMap.has(c.id))
+//       allClinicMap.set(c.id, { ...c, _isOwner: false });
+//   }
+
+//   const clinics = await Promise.all(
+//     Array.from(allClinicMap.values()).map(async (clinic) => {
+//       const branches = await Branch.findForClinic(clinic.id);
+
+//       let role = null;
+//       let roles = [];
+
+//       if (clinic._isOwner) {
+//         role = "owner";
+//         roles = ["owner"];
+//       } else {
+//         const branchRoles = await BranchUser.findUserRolesAcrossClinic(
+//           clinic.id,
+//           userId,
+//         );
+//         roles = [...new Set(branchRoles.map((r) => r.role_name))];
+//         role = roles[0] ?? null;
+//       }
+
+//       const { _isOwner, ...clinicData } = clinic;
+//       return { ...clinicData, branches, role, roles };
+//     }),
+//   );
+
+//   await cache.set(cacheKey, clinics, 86400);
+
+//   res.status(200);
+//   responseHandler(res, { clinics });
+// });
 
 const getClinics = asyncHandler(async function (req, res) {
   const userId = req.user?.id;
@@ -52,6 +104,12 @@ const getClinics = asyncHandler(async function (req, res) {
 const getClinic = asyncHandler(async function (req, res) {
   const clinicId = req.params.clinicId;
   const userId = req.user?.id;
+  const cacheKey = `clinic:${clinicId}:user:${userId}`;
+
+  const cachedClinic = await cache.get(cacheKey);
+  if (cachedClinic) {
+    return responseHandler(res, { clinic: cachedClinic }, "Clinic");
+  }
 
   const clinic = await Clinic.findById(clinicId);
   if (!clinic) {
@@ -76,6 +134,8 @@ const getClinic = asyncHandler(async function (req, res) {
       throw new Error("Access denied");
     }
   }
+
+  await cache.set(cacheKey, clinic, 86400);
 
   res.status(200);
   responseHandler(res, { clinic });
@@ -139,6 +199,10 @@ const createClinic = asyncHandler(async function (req, res) {
   newClinic.role = "owner";
   newClinic.roles = ["owner"];
 
+  // Bust user clinics list so new clinic appears
+  await cache.del(`user:${userId}:clinics`);
+  await cache.del(`user:${userId}:clinics:full`);
+
   res.status(201);
   responseHandler(res, { clinic: newClinic });
 });
@@ -178,6 +242,10 @@ const createBranch = asyncHandler(async function (req, res) {
     throw new Error("Failed to create branch");
   }
 
+  // Bust clinic caches since branches changed
+  await cache.del(`clinic:${clinicId}:user:${userId}`);
+  await cache.del(`user:${userId}:clinics:full`);
+
   const newBranch = await Branch.findById(branchId, clinicId);
   res.status(201);
   responseHandler(res, { branch: newBranch });
@@ -186,6 +254,12 @@ const createBranch = asyncHandler(async function (req, res) {
 const getSubscription = asyncHandler(async function (req, res) {
   const clinicId = parseInt(req.params.clinicId, 10);
   const userId = req.user?.id;
+  const cacheKey = `clinic:${clinicId}:subscription`;
+
+  const cachedSub = await cache.get(cacheKey);
+  if (cachedSub) {
+    return responseHandler(res, { subscription: cachedSub }, "Subscription");
+  }
 
   const clinic = await Clinic.findById(clinicId);
   if (!clinic) {
@@ -212,9 +286,12 @@ const getSubscription = asyncHandler(async function (req, res) {
     throw new Error("No active subscription found");
   }
 
-  // attach current usage counts
+  // attach current usage counts (live — not cached since these change with every new staff/branch)
   sub.current_branches = await Subscription.countBranches(clinicId);
   sub.current_users = await Subscription.countUsers(clinicId);
+
+  // Cache for 1 hour (shorter since usage counts shift)
+  await cache.set(cacheKey, sub, 3600);
 
   res.status(200);
   responseHandler(res, { subscription: sub });
@@ -225,14 +302,14 @@ const getStaffInvitations = asyncHandler(async function (req, res) {
   const clinicId = parseInt(req.params.clinicId, 10);
   const branchId = parseInt(req.params.branchId, 10);
 
-  // --- Query params ---
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const offset = (page - 1) * limit;
   const search = req.query.search?.trim() || null;
   const roleId = req.query.role_id ? parseInt(req.query.role_id, 10) : null;
-  const status = req.query.status || null; // pending | accepted | expired | cancelled
+  const status = req.query.status || null;
 
+  // Invitations are paginated and filtered — skip caching, always fresh
   const { staffInvites, total } =
     await BranchUser.findStaffInviteByClinicAndBranch({
       clinicId,
@@ -265,17 +342,17 @@ const getStaffs = asyncHandler(async function (req, res) {
   const clinicId = parseInt(req.params.clinicId, 10);
   const branchId = parseInt(req.params.branchId, 10);
 
-  // --- Query params ---
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const offset = (page - 1) * limit;
   const search = req.query.search?.trim() || null;
   const roleId = req.query.role_id ? parseInt(req.query.role_id, 10) : null;
-  const status = req.query.status || null; // active | suspended | terminated | resigned
+  const status = req.query.status || null;
   const departmentId = req.query.department_id
     ? parseInt(req.query.department_id, 10)
     : null;
 
+  // Paginated + filtered staff list — skip caching to always reflect latest status
   const { staff, total } = await BranchUser.findStaffByBranch({
     clinicId,
     branchId,
@@ -302,6 +379,7 @@ const getStaffs = asyncHandler(async function (req, res) {
     },
   });
 });
+
 module.exports = {
   getClinics,
   getClinic,
